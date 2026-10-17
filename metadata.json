@@ -1,0 +1,6 @@
+{
+  "name": "Customer Lifetime Value & Churn Dashboard",
+  "description": "An interactive decision-support platform that estimates customer lifetime value via BG/NBD and Gamma-Gamma models, predicts customer attrition with machine learning, and translates predictive metrics into tangible business impact and revenue forecasts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
