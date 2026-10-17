@@ -22,7 +22,11 @@ import {
   Search,
   ExternalLink,
   Table,
-  Check
+  Check,
+  Lock,
+  ShieldAlert,
+  Mail,
+  Copy
 } from "lucide-react";
 import { Transaction, APIConfig } from "../types";
 import { generateEcommerceSampleData, generateSaaSSampleData } from "../utils/sampleData";
@@ -43,11 +47,20 @@ export default function ImportTab({
   transactionsCount,
   currentTransactions
 }: ImportTabProps) {
-  const { user, token, signInWithGoogle } = useAuth();
+  const { user, token, isCreator, isApproved, creatorEmail, signInWithGoogle } = useAuth();
+  const hasWriteAccess = Boolean(user && (isApproved || isCreator));
 
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [csvError, setCsvError] = useState<string | null>(null);
+  const [copiedDraft, setCopiedDraft] = useState(false);
+
+  const handleCopyCsvDraft = () => {
+    const draft = `To: ${creatorEmail}\nSubject: Access Request: Upload CSV & Modify Customer Data\n\nHi Mui Kim,\n\nI would like to request authorized access to upload CSV datasets and write customer records in the Customer Lifetime Value & Churn Engine.\n\nMy Google Account: ${user?.email || "N/A"}\nUID: ${user?.uid || "N/A"}\n\nPlease approve my account in your Creator Access Portal.\n\nThank you!`;
+    navigator.clipboard.writeText(draft);
+    setCopiedDraft(true);
+    setTimeout(() => setCopiedDraft(false), 2500);
+  };
   
   // Cloud SQL Sync State
   const [syncLoading, setSyncLoading] = useState(false);
@@ -111,6 +124,13 @@ export default function ImportTab({
   // Save current active transactions into Cloud SQL
   const handleSaveToCloudSql = async () => {
     if (!token) return;
+    if (!hasWriteAccess) {
+      setSyncStatus({
+        type: "error",
+        message: `Security Access Restricted: Your account is pending creator authorization. Please drop an email to ${creatorEmail} to approve access.`
+      });
+      return;
+    }
     setSyncLoading(true);
     setSyncStatus(null);
     try {
@@ -204,6 +224,13 @@ export default function ImportTab({
   // Clear transactions in Cloud SQL
   const handleClearCloudSql = async () => {
     if (!token) return;
+    if (!hasWriteAccess) {
+      setSyncStatus({
+        type: "error",
+        message: `Security Access Restricted: Deleting database records requires approval from creator ${creatorEmail}.`
+      });
+      return;
+    }
     if (!confirm("Are you sure you want to delete all stored transactions for your account in Cloud SQL?")) return;
     setSyncLoading(true);
     setSyncStatus(null);
@@ -234,6 +261,13 @@ export default function ImportTab({
   // Delete a single row from Cloud SQL
   const handleDeleteRow = async (id: number) => {
     if (!token) return;
+    if (!hasWriteAccess) {
+      setSyncStatus({
+        type: "error",
+        message: `Security Access Restricted: Removing transactions requires creator authorization (${creatorEmail}).`
+      });
+      return;
+    }
     try {
       const res = await fetch(`/api/transactions/${id}`, {
         method: "DELETE",
@@ -259,6 +293,13 @@ export default function ImportTab({
   const handleAddManualOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token || !newCustId || !newAmount) return;
+    if (!hasWriteAccess) {
+      setSyncStatus({
+        type: "error",
+        message: `Security Access Restricted: Adding customer orders requires creator approval from ${creatorEmail}.`
+      });
+      return;
+    }
     setAddingOrder(true);
     try {
       const orderAmount = parseFloat(newAmount);
@@ -314,7 +355,17 @@ export default function ImportTab({
 
   // Live order webhook simulator
   const handleSimulateIncomingOrder = async () => {
-    if (!user) return;
+    if (!user) {
+      signInWithGoogle();
+      return;
+    }
+    if (!hasWriteAccess) {
+      setSyncStatus({
+        type: "error",
+        message: `Security Access Restricted: Live order simulation requires creator approval from ${creatorEmail}.`
+      });
+      return;
+    }
     setSimulatingOrder(true);
     try {
       const sampleCustomer = currentTransactions.length > 0 
@@ -418,8 +469,12 @@ export default function ImportTab({
         });
       }
 
-      if (parsedTransactions.length === 0) {
-        throw new Error("No valid transactions could be parsed from the CSV.");
+      if (!user) {
+        throw new Error("Authentication Required: Please sign in with Google to upload and process customer CSV data.");
+      }
+
+      if (!hasWriteAccess) {
+        throw new Error(`Security Access Restricted: Your account (${user.email}) is pending creator authorization. Please drop an email to ${creatorEmail} to approve access.`);
       }
 
       onDataLoaded(parsedTransactions, `Custom Upload: ${csvFile?.name || "CSV Data"}`);
@@ -509,16 +564,23 @@ export default function ImportTab({
               <>
                 <button
                   onClick={handleSaveToCloudSql}
-                  disabled={syncLoading}
-                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center space-x-2 shadow-xs transition-colors"
+                  disabled={syncLoading || !hasWriteAccess}
+                  className={`px-4 py-2.5 rounded-xl text-white text-xs font-semibold flex items-center space-x-2 shadow-xs transition-colors ${
+                    hasWriteAccess 
+                      ? "bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50" 
+                      : "bg-slate-700/80 text-slate-400 border border-white/10 cursor-not-allowed"
+                  }`}
                   id="persist-to-cloudsql-btn"
+                  title={hasWriteAccess ? "Save current dataset into Cloud SQL" : `Approval from creator (${creatorEmail}) required`}
                 >
                   {syncLoading ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : !hasWriteAccess ? (
+                    <Lock className="w-4 h-4 text-slate-400" />
                   ) : (
                     <Save className="w-4 h-4" />
                   )}
-                  <span>Persist to Cloud SQL</span>
+                  <span>{hasWriteAccess ? "Persist to Cloud SQL" : "Persist (Approval Required)"}</span>
                 </button>
 
                 <button
@@ -533,12 +595,17 @@ export default function ImportTab({
 
                 <button
                   onClick={handleSimulateIncomingOrder}
-                  disabled={simulatingOrder}
-                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center space-x-1.5 shadow-xs transition-colors"
+                  disabled={simulatingOrder || !hasWriteAccess}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-xs transition-colors ${
+                    hasWriteAccess 
+                      ? "bg-amber-500 hover:bg-amber-400 text-slate-950" 
+                      : "bg-slate-800 text-slate-400 border border-white/10 cursor-not-allowed"
+                  }`}
                   id="simulate-live-order-btn"
+                  title={hasWriteAccess ? "Trigger real-time webhook order" : `Approval from creator (${creatorEmail}) required`}
                 >
-                  <Zap className="w-4 h-4 fill-slate-950" />
-                  <span>{simulatingOrder ? "Ingesting..." : "Simulate Incoming Order (+1)"}</span>
+                  {!hasWriteAccess ? <Lock className="w-4 h-4" /> : <Zap className="w-4 h-4 fill-slate-950" />}
+                  <span>{simulatingOrder ? "Ingesting..." : hasWriteAccess ? "Simulate Incoming Order (+1)" : "Simulate (Locked)"}</span>
                 </button>
               </>
             ) : (
@@ -677,11 +744,16 @@ export default function ImportTab({
             />
             <button
               type="submit"
-              disabled={addingOrder}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg transition-colors flex items-center space-x-1 shrink-0"
+              disabled={addingOrder || !hasWriteAccess}
+              className={`px-4 py-2 font-semibold text-xs rounded-lg transition-colors flex items-center space-x-1.5 shrink-0 ${
+                hasWriteAccess
+                  ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs"
+                  : "bg-slate-200 text-slate-500 cursor-not-allowed"
+              }`}
+              title={hasWriteAccess ? "Commit Order" : "Authorization required from creator muikimlim.insead@gmail.com"}
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>{addingOrder ? "Saving..." : "Commit Order"}</span>
+              {!hasWriteAccess ? <Lock className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+              <span>{addingOrder ? "Saving..." : hasWriteAccess ? "Commit Order" : "Commit Order (Locked)"}</span>
             </button>
           </form>
 
@@ -724,8 +796,11 @@ export default function ImportTab({
                       <td className="py-2.5 px-4 text-right">
                         <button
                           onClick={() => handleDeleteRow(row.id)}
-                          className="text-slate-400 hover:text-rose-600 p-1"
-                          title="Delete from database"
+                          disabled={!hasWriteAccess}
+                          className={`p-1 transition-colors ${
+                            hasWriteAccess ? "text-slate-400 hover:text-rose-600" : "text-slate-300 cursor-not-allowed"
+                          }`}
+                          title={hasWriteAccess ? "Delete from database" : "Locked (Approval Required)"}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -831,29 +906,80 @@ export default function ImportTab({
               </button>
             </div>
             
-            <form
-              onDragEnter={handleDrag}
-              onDragOver={handleDrag}
-              onDragLeave={handleDrag}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
-                dragActive ? "border-indigo-600 bg-indigo-50/20" : "border-slate-200 hover:border-slate-400 bg-slate-50/30"
-              }`}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                className="hidden"
-                onChange={handleFileChange}
-              />
-              <Upload className="w-5 h-5 text-indigo-500 mx-auto mb-2" />
-              <span className="text-xs font-medium text-slate-700 block">
-                {csvFile ? csvFile.name : "Click or drag & drop CSV file"}
-              </span>
-              <span className="text-[10px] text-slate-400">CustomerID, InvoiceDate, PurchaseAmount</span>
-            </form>
+            {!user ? (
+              <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center bg-slate-50/50 flex flex-col items-center justify-center space-y-3">
+                <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-slate-800 text-xs">Authentication Required</h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5 max-w-xs">
+                    Please sign in with Google to upload customer transaction CSVs or commit live data.
+                  </p>
+                </div>
+                <button
+                  onClick={signInWithGoogle}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center space-x-1.5 transition-colors"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Sign In with Google</span>
+                </button>
+              </div>
+            ) : !hasWriteAccess ? (
+              <div className="border-2 border-dashed border-amber-200 rounded-xl p-6 text-center bg-amber-50/40 flex flex-col items-center justify-center space-y-3">
+                <div className="p-2.5 bg-amber-100 text-amber-700 rounded-xl">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-amber-950 text-xs">Creator Authorization Required</h3>
+                  <p className="text-[11px] text-amber-800 mt-0.5 max-w-sm">
+                    You are signed in as <strong>{user.email}</strong>. Uploading custom CSV files or modifying customer databases requires approval from creator <strong>{creatorEmail}</strong>.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <a
+                    href={`mailto:${creatorEmail}?subject=${encodeURIComponent("Access Request: Upload CSV & Modify Customer Data")}&body=${encodeURIComponent(
+                      `Hi Mui Kim,\n\nI would like to request permission to upload CSV datasets and write customer records in the Customer Lifetime Value & Churn Engine.\n\nMy Google Account: ${user.email}\nUID: ${user.uid}\n\nPlease approve my account in your Creator Access Portal.\n\nThank you!`
+                    )}`}
+                    className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-medium shadow-xs flex items-center space-x-1 transition-colors"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Email Creator for Access</span>
+                  </a>
+                  <button
+                    onClick={handleCopyCsvDraft}
+                    className="px-3 py-1.5 bg-white hover:bg-amber-50 border border-amber-300 text-amber-900 rounded-xl text-xs font-medium flex items-center space-x-1 transition-colors"
+                  >
+                    {copiedDraft ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-amber-600" />}
+                    <span>{copiedDraft ? "Copied!" : "Copy Email Draft"}</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form
+                onDragEnter={handleDrag}
+                onDragOver={handleDrag}
+                onDragLeave={handleDrag}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
+                  dragActive ? "border-indigo-600 bg-indigo-50/20" : "border-slate-200 hover:border-slate-400 bg-slate-50/30"
+                }`}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+                <Upload className="w-5 h-5 text-indigo-500 mx-auto mb-2" />
+                <span className="text-xs font-medium text-slate-700 block">
+                  {csvFile ? csvFile.name : "Click or drag & drop CSV file"}
+                </span>
+                <span className="text-[10px] text-slate-400">CustomerID, InvoiceDate, PurchaseAmount</span>
+              </form>
+            )}
 
             {csvError && (
               <p className="text-xs text-rose-600 mt-2 font-medium">{csvError}</p>

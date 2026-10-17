@@ -18,10 +18,15 @@ import {
   History,
   ShoppingBag,
   Clock,
-  ArrowRight
+  ArrowRight,
+  Lock,
+  ShieldAlert,
+  Mail,
+  Copy
 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from "recharts";
 import { RFMCustomer, PredictionResult, ModelParameters, Transaction } from "../types";
+import { useAuth } from "../context/AuthContext";
 
 interface CLVTabProps {
   customers: RFMCustomer[];
@@ -44,6 +49,9 @@ export default function CLVTab({
   onDeleteCustomer,
   onAddOrderToCustomer
 }: CLVTabProps) {
+  const { user, isCreator, isApproved, creatorEmail, signInWithGoogle } = useAuth();
+  const hasWriteAccess = Boolean(user && (isApproved || isCreator));
+
   const [searchTerm, setSearchTerm] = useState("");
   const [healthFilter, setHealthFilter] = useState<"all" | "high" | "medium" | "low">("all");
   const [currentPage, setCurrentPage] = useState(1);
@@ -51,6 +59,9 @@ export default function CLVTab({
 
   // Add Customer Modal State
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [securityModalReason, setSecurityModalReason] = useState<string>("");
+  const [copiedDraft, setCopiedDraft] = useState(false);
   const [newCustId, setNewCustId] = useState("");
   const [newCustAmount, setNewCustAmount] = useState("");
   const [newCustDate, setNewCustDate] = useState(new Date().toISOString().split("T")[0]);
@@ -59,6 +70,57 @@ export default function CLVTab({
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [orderAmount, setOrderAmount] = useState("");
   const [orderDate, setOrderDate] = useState(new Date().toISOString().split("T")[0]);
+
+  const handleTriggerAddCustomer = () => {
+    if (!user) {
+      setSecurityModalReason("You must sign in with Google to add or modify customer records.");
+      setShowSecurityModal(true);
+      return;
+    }
+    if (!hasWriteAccess) {
+      setSecurityModalReason(`Your account (${user.email}) is currently in Read-Only mode. Adding customer records requires authorization from creator ${creatorEmail}.`);
+      setShowSecurityModal(true);
+      return;
+    }
+    setShowAddModal(true);
+  };
+
+  const handleTriggerEditCustomer = (customerId: string) => {
+    if (!user) {
+      setSecurityModalReason("You must sign in with Google to view detailed order histories or add incremental transactions.");
+      setShowSecurityModal(true);
+      return;
+    }
+    if (!hasWriteAccess) {
+      setSecurityModalReason(`Account pending approval. Modifying orders for customer ${customerId} requires authorization from creator ${creatorEmail}.`);
+      setShowSecurityModal(true);
+      return;
+    }
+    setSelectedCustomerId(customerId);
+  };
+
+  const handleTriggerDeleteCustomer = (customerId: string) => {
+    if (!user) {
+      setSecurityModalReason("You must sign in with Google to delete customer records.");
+      setShowSecurityModal(true);
+      return;
+    }
+    if (!hasWriteAccess) {
+      setSecurityModalReason(`Account pending approval. Deleting customer records requires authorization from creator ${creatorEmail}.`);
+      setShowSecurityModal(true);
+      return;
+    }
+    if (confirm(`Delete customer ${customerId} and all their transaction history?`)) {
+      if (onDeleteCustomer) onDeleteCustomer(customerId);
+    }
+  };
+
+  const handleCopySecurityEmail = () => {
+    const draft = `To: ${creatorEmail}\nSubject: Access Request: Customer Lifetime Value & Churn Engine\n\nHi Mui Kim,\n\nI would like to request permission to add and edit customer records in the Customer Lifetime Value & Churn Engine.\n\nMy Google Account: ${user?.email || "N/A"}\nUID: ${user?.uid || "N/A"}\n\nPlease approve my account in your Creator Access Portal.\n\nThank you!`;
+    navigator.clipboard.writeText(draft);
+    setCopiedDraft(true);
+    setTimeout(() => setCopiedDraft(false), 2500);
+  };
 
   // 1. Bin Probability Alive for Histogram
   const histogramData = useMemo(() => {
@@ -310,12 +372,17 @@ export default function CLVTab({
             
             {/* Add Customer Button */}
             <button
-              onClick={() => setShowAddModal(true)}
-              className="py-2 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs rounded-xl shadow-xs transition-colors flex items-center space-x-1.5 shrink-0"
+              onClick={handleTriggerAddCustomer}
+              className={`py-2 px-3.5 font-medium text-xs rounded-xl shadow-xs transition-colors flex items-center space-x-1.5 shrink-0 ${
+                hasWriteAccess 
+                  ? "bg-indigo-600 hover:bg-indigo-700 text-white" 
+                  : "bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80"
+              }`}
               id="add-customer-top-btn"
+              title={hasWriteAccess ? "Add new customer" : "Authentication & Approval Required to add customers"}
             >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>Add Customer</span>
+              {!hasWriteAccess ? <Lock className="w-3.5 h-3.5 text-slate-500" /> : <UserPlus className="w-3.5 h-3.5" />}
+              <span>{hasWriteAccess ? "Add Customer" : "Add Customer 🔒"}</span>
             </button>
 
             {/* Search Input */}
@@ -422,20 +489,16 @@ export default function CLVTab({
                       <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center space-x-1">
                           <button
-                            onClick={() => setSelectedCustomerId(c.customerId)}
+                            onClick={() => handleTriggerEditCustomer(c.customerId)}
                             className="p-1.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition-colors"
-                            title="Edit / Add Orders"
+                            title={hasWriteAccess ? "Edit / Add Orders" : "View / Edit (Authentication & Approval Required)"}
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => {
-                              if (confirm(`Delete customer ${c.customerId} and all their transaction history?`)) {
-                                if (onDeleteCustomer) onDeleteCustomer(c.customerId);
-                              }
-                            }}
+                            onClick={() => handleTriggerDeleteCustomer(c.customerId)}
                             className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                            title="Delete Customer"
+                            title={hasWriteAccess ? "Delete Customer" : "Delete (Authentication & Approval Required)"}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -695,6 +758,99 @@ export default function CLVTab({
               >
                 Close
               </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Modal 3: Security Access Gate Modal (Authentication & Creator Approval) */}
+      {showSecurityModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            
+            <div className="flex justify-between items-start border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2 text-amber-600">
+                <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-slate-800 text-base">
+                    {!user ? "Authentication Required" : "Creator Approval Required"}
+                  </h3>
+                  <p className="text-xs text-slate-400">Security &amp; Data Integrity Protection</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowSecurityModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600 leading-relaxed">
+              <p>{securityModalReason}</p>
+
+              {!user ? (
+                <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+                  <span className="font-semibold text-slate-800 block">Why is sign-in required?</span>
+                  <p className="text-slate-500 text-[11px]">
+                    To maintain clean customer cohort tracking and safeguard production databases, only verified user accounts can create or modify customer records.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-3.5 bg-amber-50/70 rounded-xl border border-amber-200/60 space-y-2">
+                  <div className="flex items-center space-x-2 text-amber-900 font-semibold">
+                    <ShieldAlert className="w-4 h-4 text-amber-600" />
+                    <span>How to get authorized?</span>
+                  </div>
+                  <p className="text-amber-800 text-[11px]">
+                    Please email creator <strong>{creatorEmail}</strong>. Once approved in the Creator Access Portal, your account will immediately have write access to add customers and run real-time updates.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col sm:flex-row justify-end items-center gap-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setShowSecurityModal(false)}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-50 border border-slate-200"
+              >
+                Cancel
+              </button>
+
+              {!user ? (
+                <button
+                  onClick={() => {
+                    setShowSecurityModal(false);
+                    signInWithGoogle();
+                  }}
+                  className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-xs flex items-center justify-center space-x-1.5"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Sign in with Google</span>
+                </button>
+              ) : (
+                <div className="flex items-center space-x-2 w-full sm:w-auto">
+                  <button
+                    onClick={handleCopySecurityEmail}
+                    className="flex-1 sm:flex-initial px-3 py-2 rounded-xl text-xs font-medium border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center space-x-1"
+                  >
+                    {copiedDraft ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedDraft ? "Copied!" : "Copy Email"}</span>
+                  </button>
+                  <a
+                    href={`mailto:${creatorEmail}?subject=${encodeURIComponent("Access Request: Customer Lifetime Value & Churn Engine")}&body=${encodeURIComponent(
+                      `Hi Mui Kim,\n\nI would like to request permission to add and edit customer records in the Customer Lifetime Value & Churn Engine.\n\nMy Google Account: ${user.email}\nUID: ${user.uid}\n\nPlease approve my account in your Creator Access Portal.\n\nThank you!`
+                    )}`}
+                    className="flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 shadow-xs flex items-center justify-center space-x-1.5"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Email Creator</span>
+                  </a>
+                </div>
+              )}
             </div>
 
           </div>

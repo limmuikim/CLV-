@@ -8,7 +8,7 @@ import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
-import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
+import { requireAuth, requireApprovedAccess, requireAdmin, AuthRequest } from "./src/middleware/auth.ts";
 import { 
   getOrCreateUser, 
   getUserTransactions, 
@@ -16,7 +16,10 @@ import {
   deleteUserTransactions,
   deleteTransactionById,
   saveSnapshots, 
-  getLatestSnapshots 
+  getLatestSnapshots,
+  getAllUsers,
+  updateUserStatus,
+  CREATOR_EMAIL
 } from "./src/db/operations.ts";
 
 dotenv.config();
@@ -50,7 +53,7 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// Authenticate user & sync to Cloud SQL
+// Authenticate user & sync to Cloud SQL with approval status check
 app.get("/api/user/me", requireAuth, async (req: AuthRequest, res) => {
   try {
     const uid = req.user?.uid;
@@ -59,10 +62,44 @@ app.get("/api/user/me", requireAuth, async (req: AuthRequest, res) => {
       return res.status(401).json({ error: "Missing user identification" });
     }
     const userRecord = await getOrCreateUser(uid, email);
-    res.json({ success: true, user: userRecord });
+    const isCreator = email.trim().toLowerCase() === CREATOR_EMAIL.toLowerCase();
+    res.json({ 
+      success: true, 
+      user: userRecord,
+      isCreator,
+      isApproved: isCreator || userRecord.status === 'approved',
+      creatorEmail: CREATOR_EMAIL
+    });
   } catch (error: any) {
     console.error("User sync error:", error);
     res.status(500).json({ error: error.message || "Failed to authenticate user with database" });
+  }
+});
+
+// Admin endpoint: List all registered users (Creator only)
+app.get("/api/admin/users", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const userList = await getAllUsers();
+    res.json({ users: userList });
+  } catch (error: any) {
+    console.error("Fetch all users error:", error);
+    res.status(500).json({ error: error.message || "Failed to query user directory" });
+  }
+});
+
+// Admin endpoint: Update user access status (Creator only)
+app.post("/api/admin/users/:targetUid/status", requireAuth, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const { targetUid } = req.params;
+    const { status } = req.body;
+    if (!['approved', 'pending', 'rejected'].includes(status)) {
+      return res.status(400).json({ error: "Invalid status value. Must be 'approved', 'pending', or 'rejected'." });
+    }
+    const updated = await updateUserStatus(targetUid, status);
+    res.json({ success: true, user: updated });
+  } catch (error: any) {
+    console.error("Update user status error:", error);
+    res.status(500).json({ error: error.message || "Failed to update user status" });
   }
 });
 
@@ -78,8 +115,8 @@ app.get("/api/transactions", requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-// Batch insert transactions into Cloud SQL
-app.post("/api/transactions", requireAuth, async (req: AuthRequest, res) => {
+// Batch insert transactions into Cloud SQL (Protected: requires Creator or Approved user)
+app.post("/api/transactions", requireAuth, requireApprovedAccess, async (req: AuthRequest, res) => {
   try {
     const uid = req.user!.uid;
     const email = req.user?.email || "unknown@user.com";
@@ -102,8 +139,8 @@ app.post("/api/transactions", requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-// Delete user's transactions
-app.delete("/api/transactions", requireAuth, async (req: AuthRequest, res) => {
+// Delete user's transactions (Protected: requires Creator or Approved user)
+app.delete("/api/transactions", requireAuth, requireApprovedAccess, async (req: AuthRequest, res) => {
   try {
     const uid = req.user!.uid;
     await deleteUserTransactions(uid);
@@ -114,8 +151,8 @@ app.delete("/api/transactions", requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-// Delete single transaction by ID
-app.delete("/api/transactions/:id", requireAuth, async (req: AuthRequest, res) => {
+// Delete single transaction by ID (Protected: requires Creator or Approved user)
+app.delete("/api/transactions/:id", requireAuth, requireApprovedAccess, async (req: AuthRequest, res) => {
   try {
     const uid = req.user!.uid;
     const txId = parseInt(req.params.id);
@@ -130,8 +167,8 @@ app.delete("/api/transactions/:id", requireAuth, async (req: AuthRequest, res) =
   }
 });
 
-// Save calculated CLV & Churn model snapshots
-app.post("/api/snapshots", requireAuth, async (req: AuthRequest, res) => {
+// Save calculated CLV & Churn model snapshots (Protected: requires Creator or Approved user)
+app.post("/api/snapshots", requireAuth, requireApprovedAccess, async (req: AuthRequest, res) => {
   try {
     const uid = req.user!.uid;
     const { snapshots } = req.body;

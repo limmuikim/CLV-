@@ -7,19 +7,35 @@ import { db } from './index.ts';
 import { users, transactions, clvSnapshots } from './schema.ts';
 import { eq, desc } from 'drizzle-orm';
 
-// Synchronize user profile on sign-in
+export const CREATOR_EMAIL = 'muikimlim.insead@gmail.com';
+
+// Synchronize user profile on sign-in with access approval checks
 export async function getOrCreateUser(uid: string, email: string) {
   try {
+    const isCreator = email.trim().toLowerCase() === CREATOR_EMAIL.toLowerCase();
+    
+    // Check if user already exists
+    const existing = await db.select().from(users).where(eq(users.uid, uid));
+    if (existing.length > 0) {
+      const u = existing[0];
+      // If creator, ensure they are always admin and approved
+      if (isCreator && (u.role !== 'admin' || u.status !== 'approved')) {
+        const updated = await db.update(users)
+          .set({ role: 'admin', status: 'approved', email })
+          .where(eq(users.uid, uid))
+          .returning();
+        return updated[0];
+      }
+      return u;
+    }
+
+    // New user
     const result = await db.insert(users)
       .values({
         uid,
         email,
-      })
-      .onConflictDoUpdate({
-        target: users.uid,
-        set: {
-          email,
-        },
+        role: isCreator ? 'admin' : 'user',
+        status: isCreator ? 'approved' : 'pending',
       })
       .returning();
 
@@ -27,6 +43,41 @@ export async function getOrCreateUser(uid: string, email: string) {
   } catch (error) {
     console.error("Database user upsert failed:", error);
     throw new Error("Failed to synchronize user account.", { cause: error });
+  }
+}
+
+// Get user profile by UID
+export async function getUserByUid(uid: string) {
+  try {
+    const records = await db.select().from(users).where(eq(users.uid, uid));
+    return records[0] || null;
+  } catch (error) {
+    console.error("Failed to fetch user by uid:", error);
+    throw new Error("Failed to query user profile.", { cause: error });
+  }
+}
+
+// Get all users (Admin creator only)
+export async function getAllUsers() {
+  try {
+    return await db.select().from(users).orderBy(desc(users.createdAt));
+  } catch (error) {
+    console.error("Failed to query all users:", error);
+    throw new Error("Failed to query users list.", { cause: error });
+  }
+}
+
+// Update user access status (approved | pending | rejected)
+export async function updateUserStatus(targetUid: string, status: 'approved' | 'pending' | 'rejected') {
+  try {
+    const updated = await db.update(users)
+      .set({ status })
+      .where(eq(users.uid, targetUid))
+      .returning();
+    return updated[0];
+  } catch (error) {
+    console.error("Failed to update user status:", error);
+    throw new Error("Failed to update access status.", { cause: error });
   }
 }
 

@@ -15,8 +15,9 @@ import {
   Zap,
   LogIn,
   LogOut,
-  User as UserIcon,
-  CheckCircle,
+  ShieldCheck,
+  ShieldAlert,
+  Lock,
   Cloud
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -32,9 +33,11 @@ import CLVTab from "./components/CLVTab";
 import ChurnTab from "./components/ChurnTab";
 import CohortTab from "./components/CohortTab";
 import BusinessImpactTab from "./components/BusinessImpactTab";
+import AdminApprovalModal from "./components/AdminApprovalModal";
+import AccessPendingBanner from "./components/AccessPendingBanner";
 
 function Dashboard() {
-  const { user, token, signInWithGoogle, signOut, loading: authLoading } = useAuth();
+  const { user, token, isCreator, isApproved, creatorEmail, signInWithGoogle, signOut, loading: authLoading } = useAuth();
 
   // 1. App State
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -42,7 +45,8 @@ function Dashboard() {
   const [activeTab, setActiveTab] = useState<"overview" | "import" | "clv" | "churn" | "cohorts" | "impact">("overview");
   const [targetDays, setTargetDays] = useState(90); // default forecast horizon
   const [profitMargin, setProfitMargin] = useState(0.70); // 70% profit margin representable
-  const [dbSyncing, setDbSyncing] = useState(false);
+  const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [permissionErrorNotice, setPermissionErrorNotice] = useState<string | null>(null);
 
   // 2. Initialize with default E-commerce dataset on first mount
   useEffect(() => {
@@ -106,8 +110,23 @@ function Dashboard() {
     return computeAllModels(rfmCustomers, modelParams, targetDays, profitMargin);
   }, [rfmCustomers, modelParams, targetDays, profitMargin]);
 
+  // Security Verification Guard
+  const verifyWritePermission = (): boolean => {
+    if (!user) {
+      setPermissionErrorNotice("Authentication Required: You must sign in with Google to modify customer data or upload CSVs.");
+      signInWithGoogle();
+      return false;
+    }
+    if (!isApproved && !isCreator) {
+      setPermissionErrorNotice(`Access Restricted: Your account (${user.email}) is pending approval from the creator (${creatorEmail}). Please drop an email to request access.`);
+      return false;
+    }
+    return true;
+  };
+
   // Handler for custom imports
   const handleDataImported = (newTransactions: Transaction[], type: string) => {
+    if (!verifyWritePermission()) return;
     setTransactions(newTransactions);
     setDatasetType(type);
     setActiveTab("overview");
@@ -115,6 +134,8 @@ function Dashboard() {
 
   // Add a brand new customer
   const handleAddCustomer = async (customerId: string, amount: number, date: string) => {
+    if (!verifyWritePermission()) return;
+
     const newTx: Transaction = { customerId, amount, date };
     const updated = [newTx, ...transactions];
     setTransactions(updated);
@@ -146,6 +167,8 @@ function Dashboard() {
 
   // Add an order to an existing customer
   const handleAddOrderToCustomer = async (customerId: string, amount: number, date: string) => {
+    if (!verifyWritePermission()) return;
+
     const newTx: Transaction = { customerId, amount, date };
     const updated = [newTx, ...transactions];
     setTransactions(updated);
@@ -177,6 +200,8 @@ function Dashboard() {
 
   // Delete a customer and their orders
   const handleDeleteCustomer = async (customerId: string) => {
+    if (!verifyWritePermission()) return;
+
     const updated = transactions.filter(t => t.customerId !== customerId);
     setTransactions(updated);
 
@@ -223,7 +248,7 @@ function Dashboard() {
                   Customer Lifetime Value & Churn Engine
                 </h1>
                 <span className="inline-flex items-center text-[9px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded-full uppercase tracking-wider font-mono">
-                  Cloud SQL Live
+                  Cloud SQL
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5 font-medium flex items-center">
@@ -276,20 +301,58 @@ function Dashboard() {
               />
             </div>
 
-            {/* Firebase Auth Button */}
-            <div className="flex items-center">
+            {/* Creator Admin Access Management Button */}
+            {isCreator && (
+              <button
+                onClick={() => setAdminModalOpen(true)}
+                className="flex items-center space-x-1.5 text-xs bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-1.5 px-3 rounded-xl shadow-xs transition-colors"
+                title="Manage user access and approve permissions"
+              >
+                <ShieldCheck className="w-4 h-4 text-slate-950" />
+                <span>Admin Access</span>
+              </button>
+            )}
+
+            {/* Firebase Auth Button & User Status */}
+            <div className="flex items-center space-x-2">
+              {user && !isApproved && !isCreator && (
+                <a
+                  href={`mailto:${creatorEmail}?subject=${encodeURIComponent("Access Request: Customer Lifetime Value & Churn Engine")}&body=${encodeURIComponent(
+                    `Hi Mui Kim,\n\nI would like to request permission to use and add customer records in the Customer Lifetime Value & Churn Engine.\n\nMy Google Account: ${user.email}\nUser UID: ${user.uid}\n\nPlease approve my account in your Creator Access Portal.\n\nThank you!`
+                  )}`}
+                  className="hidden sm:flex items-center space-x-1.5 text-xs bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-1.5 px-2.5 rounded-xl shadow-xs transition-colors"
+                  title="Send email to creator to request write authorization"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Request Access</span>
+                </a>
+              )}
+
               {user ? (
-                <div className="flex items-center space-x-2 bg-indigo-50/70 border border-indigo-100 py-1 px-2.5 rounded-xl text-xs">
-                  <div className="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-[10px]">
+                <div className="flex items-center space-x-2 bg-slate-100 border border-slate-200/80 py-1 px-2.5 rounded-xl text-xs">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] text-white ${
+                    isCreator ? "bg-amber-600" : isApproved ? "bg-emerald-600" : "bg-slate-500"
+                  }`}>
                     {user.email ? user.email.charAt(0).toUpperCase() : "U"}
                   </div>
-                  <span className="font-medium text-indigo-900 max-w-[120px] truncate hidden md:inline">
-                    {user.email}
-                  </span>
+                  <div className="flex flex-col">
+                    <span className="font-medium text-slate-800 max-w-[120px] truncate hidden md:inline leading-none">
+                      {user.email}
+                    </span>
+                    <span className="text-[9px] font-bold font-mono leading-tight mt-0.5">
+                      {isCreator ? (
+                        <span className="text-amber-600">Creator (Admin)</span>
+                      ) : isApproved ? (
+                        <span className="text-emerald-600">Approved</span>
+                      ) : (
+                        <span className="text-slate-500">Read-Only</span>
+                      )}
+                    </span>
+                  </div>
                   <button
                     onClick={signOut}
                     title="Sign Out"
-                    className="p-1 hover:text-rose-600 text-slate-400 transition-colors"
+                    className="p-1 hover:text-rose-600 text-slate-400 transition-colors ml-1"
                   >
                     <LogOut className="w-3.5 h-3.5" />
                   </button>
@@ -310,6 +373,25 @@ function Dashboard() {
 
         </div>
       </header>
+
+      {/* Access Permission Pending Gate Banner */}
+      <AccessPendingBanner />
+
+      {/* Permission Error Toast Banner */}
+      {permissionErrorNotice && (
+        <div className="bg-rose-50 border-b border-rose-200 px-4 py-2.5 text-rose-800 text-xs flex justify-between items-center animate-in slide-in-from-top-2">
+          <div className="flex items-center space-x-2">
+            <Lock className="w-4 h-4 text-rose-500 shrink-0" />
+            <span>{permissionErrorNotice}</span>
+          </div>
+          <button 
+            onClick={() => setPermissionErrorNotice(null)}
+            className="text-rose-500 hover:text-rose-700 font-bold ml-4"
+          >
+            &times;
+          </button>
+        </div>
+      )}
 
       {/* Main navigation Tabs Bar */}
       <nav className="bg-white border-b border-slate-100" id="navigation-tabs">
@@ -480,11 +562,17 @@ function Dashboard() {
         </AnimatePresence>
       </main>
 
+      {/* Admin Creator Approval Modal */}
+      <AdminApprovalModal 
+        isOpen={adminModalOpen} 
+        onClose={() => setAdminModalOpen(false)} 
+      />
+
       {/* Humble Footer */}
       <footer className="bg-white border-t border-slate-100 py-6" id="main-footer">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center text-xs text-slate-400 gap-4">
           <span className="font-medium">
-            Customer Lifetime Value &amp; Churn Dashboard &copy; 2026. Connected to Google Cloud SQL PostgreSQL.
+            Customer Lifetime Value &amp; Churn Dashboard &copy; 2026. Managed by <strong className="text-slate-600">{creatorEmail}</strong>.
           </span>
           <div className="flex space-x-6">
             <span className="font-mono">Fitted LL: {analyticsResults?.metrics?.logLikelihood?.toFixed(2) || "0.00"}</span>

@@ -6,11 +6,13 @@
 import { relations } from 'drizzle-orm';
 import { pgTable, serial, text, timestamp, doublePrecision, integer } from 'drizzle-orm/pg-core';
 
-// Users table
+// Users table with Role-Based Access Control and Creator Approval status
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   uid: text('uid').notNull().unique(), // Firebase Auth UID
   email: text('email').notNull(),
+  role: text('role').default('user').notNull(), // 'admin' | 'user'
+  status: text('status').default('pending').notNull(), // 'approved' | 'pending' | 'rejected'
   createdAt: timestamp('created_at').defaultNow(),
 });
 
