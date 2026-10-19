@@ -109,7 +109,7 @@ app.post("/api/auth/request-access", async (req, res) => {
 });
 
 // Direct email-based login endpoint (for Creator and pre-approved team members)
-app.post("/api/auth/login-email", async (req, res) => {
+app.post(["/api/auth/login-email", "/api/auth/login", "/api/login"], async (req, res) => {
   try {
     const { email } = req.body;
     if (!email || typeof email !== 'string' || !email.includes('@')) {

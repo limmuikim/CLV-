@@ -115,16 +115,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthModalOpen(false);
   };
 
-  // Safe parser to prevent 'Unexpected token T' errors on static hosts
+  // Check if the response is JSON before parsing (prevents "Unexpected token 'T'" errors on HTML responses)
   const safeParseJson = async (res: Response): Promise<{ ok: boolean; data: any }> => {
     try {
-      const text = await res.text();
-      if (!text || text.trim() === '') {
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const textResponse = await res.text();
+        console.log("Authentication warning: Server returned non-JSON response:", textResponse?.slice(0, 120));
         return { ok: false, data: null };
       }
-      const data = JSON.parse(text);
+      const data = await res.json();
       return { ok: true, data };
-    } catch {
+    } catch (error: any) {
+      console.log("Authentication error:", error?.message);
       return { ok: false, data: null };
     }
   };
@@ -287,15 +290,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const isApprovedUser = isOwner || localStatus === 'approved';
 
-    // Attempt backend login
+    // Attempt backend login (supports /api/auth/login-email and /api/login)
     try {
-      const res = await fetch('/api/auth/login-email', {
+      let res = await fetch('/api/auth/login-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: cleanEmail }),
       });
 
-      const parsed = await safeParseJson(res);
+      let parsed = await safeParseJson(res);
+      if (!res.ok || !parsed.ok) {
+        // Fallback to /api/login alias
+        try {
+          res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: cleanEmail }),
+          });
+          parsed = await safeParseJson(res);
+        } catch {}
+      }
+
       if (res.ok && parsed.ok && parsed.data?.user) {
         const data = parsed.data;
         const authUserObj: AuthUser = {
@@ -318,8 +333,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }));
         return;
       }
-    } catch (e) {
-      console.warn('Backend login endpoint unavailable, using client fallback session:', e);
+    } catch (e: any) {
+      console.log('Authentication note:', e?.message);
     }
 
     // Client session fallback (for Vercel or when SQL server is offline)
