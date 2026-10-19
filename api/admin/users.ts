@@ -10,11 +10,13 @@ export default async function handler(req: any, res: any) {
   const creatorEmail = "muikimlim.insead@gmail.com";
 
   return res.status(200).json({
+    success: true,
     users: [
       {
         id: 1,
         uid: "creator_admin",
         email: creatorEmail,
+        displayName: "Mui Kim (Creator)",
         role: "admin",
         status: "approved",
         createdAt: new Date().toISOString()

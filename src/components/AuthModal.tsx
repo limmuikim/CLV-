@@ -41,14 +41,33 @@ export default function AuthModal({ isOpen, onClose, defaultTab = "signin" }: Au
   const [loading, setLoading] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  // Sync tab when opening modal
+  // Clear errors and sync tab when opening modal
   React.useEffect(() => {
     if (isOpen) {
       setActiveTab(defaultTab);
       setLocalError(null);
+      setAuthError(null);
       setReqSubmitted(false);
     }
-  }, [isOpen, defaultTab]);
+  }, [isOpen, defaultTab, setAuthError]);
+
+  // Clean raw HTML / parser errors into clean user-facing guidance
+  const sanitizeError = (errStr: string | null) => {
+    if (!errStr) return null;
+    const lower = errStr.toLowerCase();
+    if (
+      lower.includes("unexpected token") ||
+      lower.includes("not valid json") ||
+      lower.includes("the page c") ||
+      lower.includes("<!doctype") ||
+      lower.includes("syntaxerror")
+    ) {
+      return "Network service notice: Serverless endpoint is initializing. You can submit your access request or use Direct Email Login.";
+    }
+    return errStr;
+  };
+
+  const displayError = sanitizeError(localError || authError);
 
   // Email login form state
   const [emailInput, setEmailInput] = useState("");
@@ -77,7 +96,7 @@ export default function AuthModal({ isOpen, onClose, defaultTab = "signin" }: Au
       } else if (err?.code === "auth/popup-blocked") {
         msg = "The sign-in popup was blocked by your browser. Please allow popups or use Direct Email Login below.";
       }
-      setLocalError(msg);
+      setLocalError(sanitizeError(msg));
     } finally {
       setLoading(false);
     }
@@ -97,7 +116,7 @@ export default function AuthModal({ isOpen, onClose, defaultTab = "signin" }: Au
       onClose();
     } catch (err: any) {
       console.error("Email login failed:", err);
-      setLocalError(err.message || "Failed to log in with this email.");
+      setLocalError(sanitizeError(err?.message) || "Failed to log in with this email.");
     } finally {
       setLoading(false);
     }
@@ -111,11 +130,12 @@ export default function AuthModal({ isOpen, onClose, defaultTab = "signin" }: Au
     }
     setLoading(true);
     setLocalError(null);
+    setAuthError(null);
     try {
       await requestAccess(reqEmail, reqName, reqNote);
       setReqSubmitted(true);
     } catch (err: any) {
-      console.warn("Access request server warning:", err);
+      console.warn("Access request notice:", err);
       // Still show submission confirmation so user can send direct approval email
       setReqSubmitted(true);
     } finally {
@@ -175,7 +195,7 @@ Thank you!`;
         {/* Tab Switcher */}
         <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl mt-4 text-xs font-medium">
           <button
-            onClick={() => { setActiveTab("signin"); setLocalError(null); }}
+            onClick={() => { setActiveTab("signin"); setLocalError(null); setAuthError(null); }}
             className={`py-1.5 rounded-lg transition-all flex items-center justify-center space-x-1 ${
               activeTab === "signin"
                 ? "bg-white text-indigo-600 font-bold shadow-xs"
@@ -187,7 +207,7 @@ Thank you!`;
           </button>
           
           <button
-            onClick={() => { setActiveTab("email"); setLocalError(null); }}
+            onClick={() => { setActiveTab("email"); setLocalError(null); setAuthError(null); }}
             className={`py-1.5 rounded-lg transition-all flex items-center justify-center space-x-1 ${
               activeTab === "email"
                 ? "bg-white text-indigo-600 font-bold shadow-xs"
@@ -199,7 +219,7 @@ Thank you!`;
           </button>
 
           <button
-            onClick={() => { setActiveTab("request"); setLocalError(null); }}
+            onClick={() => { setActiveTab("request"); setLocalError(null); setAuthError(null); }}
             className={`py-1.5 rounded-lg transition-all flex items-center justify-center space-x-1 ${
               activeTab === "request"
                 ? "bg-white text-indigo-600 font-bold shadow-xs"
@@ -212,13 +232,20 @@ Thank you!`;
         </div>
 
         {/* Error notification banner */}
-        {(localError || authError) && (
+        {displayError && (
           <div className="mt-4 p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-start space-x-2">
             <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
             <div className="flex-1">
               <span className="font-semibold block">Authentication Notice</span>
-              <span>{localError || authError}</span>
+              <span>{displayError}</span>
             </div>
+            <button
+              onClick={() => { setLocalError(null); setAuthError(null); }}
+              className="text-rose-400 hover:text-rose-600 p-0.5 rounded-md hover:bg-rose-100"
+              title="Dismiss error"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
 

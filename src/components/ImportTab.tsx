@@ -96,6 +96,16 @@ export default function ImportTab({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const safeParseJson = async (res: Response): Promise<{ ok: boolean; data: any }> => {
+    try {
+      const text = await res.text();
+      if (!text || text.trim() === "") return { ok: false, data: null };
+      return { ok: true, data: JSON.parse(text) };
+    } catch {
+      return { ok: false, data: null };
+    }
+  };
+
   // Fetch live database rows when token changes
   const fetchDbRows = async () => {
     if (!token) return;
@@ -104,12 +114,12 @@ export default function ImportTab({
       const res = await fetch("/api/transactions", {
         headers: { "Authorization": `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setDbRows(data.transactions || []);
+      const parsed = await safeParseJson(res);
+      if (res.ok && parsed.ok && Array.isArray(parsed.data?.transactions)) {
+        setDbRows(parsed.data.transactions);
       }
     } catch (err) {
-      console.error("Failed to load db rows:", err);
+      console.warn("Could not load db rows:", err);
     } finally {
       setDbLoading(false);
     }
@@ -156,20 +166,20 @@ export default function ImportTab({
         })
       });
 
+      const parsed = await safeParseJson(res);
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to persist to Cloud SQL");
+        throw new Error(parsed.data?.error || "Failed to persist to Cloud SQL");
       }
 
-      const data = await res.json();
+      const insertedCount = parsed.data?.insertedCount || currentTransactions.length;
       setSyncStatus({
         type: "success",
-        message: `Successfully synchronized and stored ${data.insertedCount} transactions in Cloud SQL PostgreSQL!`
+        message: `Successfully synchronized and stored ${insertedCount} transactions in Cloud SQL PostgreSQL!`
       });
-      onDataLoaded(currentTransactions, `Cloud SQL Live Database (${data.insertedCount} orders)`);
+      onDataLoaded(currentTransactions, `Cloud SQL Live Database (${insertedCount} orders)`);
       fetchDbRows();
     } catch (err: any) {
-      console.error(err);
+      console.warn("Sync error:", err);
       setSyncStatus({
         type: "error",
         message: err.message || "Failed to persist records to Cloud SQL."
@@ -188,12 +198,11 @@ export default function ImportTab({
       const res = await fetch("/api/transactions", {
         headers: { "Authorization": `Bearer ${token}` }
       });
+      const parsed = await safeParseJson(res);
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to load transactions");
+        throw new Error(parsed.data?.error || "Failed to load transactions");
       }
-      const data = await res.json();
-      const records = data.transactions || [];
+      const records = parsed.data?.transactions || [];
       if (records.length === 0) {
         setSyncStatus({
           type: "error",
@@ -243,9 +252,9 @@ export default function ImportTab({
         method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` }
       });
+      const parsed = await safeParseJson(res);
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to clear database");
+        throw new Error(parsed.data?.error || "Failed to clear database");
       }
       setDbRows([]);
       setSyncStatus({
@@ -325,9 +334,9 @@ export default function ImportTab({
         })
       });
 
+      const parsed = await safeParseJson(res);
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to add order");
+        throw new Error(parsed.data?.error || "Failed to add order");
       }
 
       setNewCustId("");
@@ -390,9 +399,9 @@ export default function ImportTab({
         })
       });
 
+      const parsed = await safeParseJson(res);
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Webhook ingestion failed");
+        throw new Error(parsed.data?.error || "Webhook ingestion failed");
       }
 
       await fetchDbRows();

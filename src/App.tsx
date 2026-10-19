@@ -78,19 +78,27 @@ function Dashboard() {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (res.ok) {
-          const data = await res.json();
-          if (data.transactions && data.transactions.length > 0) {
-            const mapped: Transaction[] = data.transactions.map((t: any) => ({
-              customerId: t.customerId,
-              date: t.date,
-              amount: t.amount
-            }));
-            setTransactions(mapped);
-            setDatasetType(`Cloud SQL Live Database (${mapped.length} orders)`);
+          const contentType = res.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            try {
+              const text = await res.text();
+              const data = JSON.parse(text);
+              if (data.transactions && data.transactions.length > 0) {
+                const mapped: Transaction[] = data.transactions.map((t: any) => ({
+                  customerId: t.customerId,
+                  date: t.date,
+                  amount: t.amount
+                }));
+                setTransactions(mapped);
+                setDatasetType(`Cloud SQL Live Database (${mapped.length} orders)`);
+              }
+            } catch (jsonErr) {
+              console.warn("Could not parse Cloud SQL transactions payload:", jsonErr);
+            }
           }
         }
       } catch (err) {
-        console.error("Failed to load user transactions from Cloud SQL:", err);
+        console.warn("Could not connect to Cloud SQL transactions endpoint:", err);
       }
     }
 

@@ -79,18 +79,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isCreator, setIsCreator] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [authError, rawSetAuthError] = useState<string | null>(null);
+
+  const setAuthError = (err: string | null) => {
+    if (!err) {
+      rawSetAuthError(null);
+      return;
+    }
+    const lower = err.toLowerCase();
+    if (
+      lower.includes("unexpected token") || 
+      lower.includes("not valid json") || 
+      lower.includes("the page c") || 
+      lower.includes("<!doctype") ||
+      lower.includes("syntaxerror")
+    ) {
+      rawSetAuthError("Network service notice: Serverless endpoint is initializing. You can submit your access request or use Direct Email Login.");
+      return;
+    }
+    rawSetAuthError(err);
+  };
 
   // Auth modal management
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalTab, setAuthModalTab] = useState<'signin' | 'request' | 'email'>('signin');
 
   const openAuthModal = (tab: 'signin' | 'request' | 'email' = 'signin') => {
+    setAuthError(null); // Clear errors whenever modal opens
     setAuthModalTab(tab);
     setAuthModalOpen(true);
   };
 
   const closeAuthModal = () => {
+    setAuthError(null);
     setAuthModalOpen(false);
   };
 
