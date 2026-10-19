@@ -65,7 +65,7 @@ export default function AdminApprovalModal({ isOpen, onClose }: AdminApprovalMod
       setUsers(prev => prev.map(u => u.uid === targetUid ? { ...u, status: newStatus } : u));
     } catch (err: any) {
       console.error(err);
-      alert("Failed to update user status: " + err.message);
+      setError("Failed to update user status: " + err.message);
     } finally {
       setUpdatingUid(null);
     }

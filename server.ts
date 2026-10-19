@@ -19,8 +19,12 @@ import {
   getLatestSnapshots,
   getAllUsers,
   updateUserStatus,
+  getUserByEmail,
+  createAccessRequest,
   CREATOR_EMAIL
 } from "./src/db/operations.ts";
+import { createSessionToken } from "./src/lib/jwt.ts";
+import { buildStrategicPrompt, generateLocalStrategicReport } from "./src/lib/strategicReportGenerator.ts";
 
 dotenv.config();
 
@@ -73,6 +77,90 @@ app.get("/api/user/me", requireAuth, async (req: AuthRequest, res) => {
   } catch (error: any) {
     console.error("User sync error:", error);
     res.status(500).json({ error: error.message || "Failed to authenticate user with database" });
+  }
+});
+
+// Public endpoint: Submit an access request
+app.post("/api/auth/request-access", async (req, res) => {
+  try {
+    const { email, name, note } = req.body;
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      return res.status(400).json({ error: "Please provide a valid email address." });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const userRecord = await createAccessRequest(cleanEmail, name, note);
+    const isCreator = cleanEmail === CREATOR_EMAIL.toLowerCase();
+
+    res.json({
+      success: true,
+      user: userRecord,
+      isCreator,
+      isApproved: isCreator || userRecord.status === 'approved',
+      creatorEmail: CREATOR_EMAIL,
+      message: isCreator 
+        ? "Welcome, Creator! You have full administrative access." 
+        : `Your access request has been recorded. Please also drop an email to ${CREATOR_EMAIL} to expedite approval.`
+    });
+  } catch (error: any) {
+    console.error("Access request error:", error);
+    res.status(500).json({ error: error.message || "Failed to process access request" });
+  }
+});
+
+// Direct email-based login endpoint (for Creator and pre-approved team members)
+app.post("/api/auth/login-email", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      return res.status(400).json({ error: "Please enter a valid email address." });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const isCreator = cleanEmail === CREATOR_EMAIL.toLowerCase();
+
+    // Look up or register user
+    let userRecord = await getUserByEmail(cleanEmail);
+    if (!userRecord) {
+      if (isCreator) {
+        userRecord = await getOrCreateUser(`creator_${Date.now()}`, cleanEmail);
+      } else {
+        // Automatically create access request for new user so they can access read-only mode and await creator approval
+        userRecord = await createAccessRequest(cleanEmail, cleanEmail.split('@')[0], "Email login access registration");
+      }
+    }
+
+    // If creator, ensure approved
+    if (isCreator && (userRecord.status !== 'approved' || userRecord.role !== 'admin')) {
+      userRecord = await getOrCreateUser(userRecord.uid, cleanEmail);
+    }
+
+    const isApproved = isCreator || userRecord.status === 'approved';
+
+    // Generate signed session token
+    const token = createSessionToken({
+      uid: userRecord.uid,
+      email: cleanEmail,
+      role: userRecord.role,
+      status: userRecord.status
+    });
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        uid: userRecord.uid,
+        email: cleanEmail,
+        displayName: isCreator ? "Mui Kim (Creator)" : cleanEmail.split('@')[0],
+      },
+      dbUser: userRecord,
+      isCreator,
+      isApproved,
+      creatorEmail: CREATOR_EMAIL
+    });
+  } catch (error: any) {
+    console.error("Email login error:", error);
+    res.status(500).json({ error: error.message || "Login failed" });
   }
 });
 
@@ -229,93 +317,50 @@ app.post("/api/webhook/orders", async (req, res) => {
 
 // AI Strategic Summary generation endpoint
 app.post("/api/analyze", async (req, res) => {
+  const payload = req.body || {};
+
+  // Check if API key is configured
+  const currentKey = process.env.GEMINI_API_KEY || geminiApiKey;
+
+  if (!currentKey) {
+    const report = generateLocalStrategicReport(payload);
+    return res.json({ 
+      report, 
+      source: "analytical_engine",
+      notice: "Generated with embedded Strategic Analysis Engine. Configure GEMINI_API_KEY to activate live Gemini AI reporting."
+    });
+  }
+
   try {
-    if (!ai) {
-      return res.status(503).json({
-        error: "Gemini API key is not configured. Please add GEMINI_API_KEY in Settings > Secrets."
-      });
-    }
+    const client = new GoogleGenAI({
+      apiKey: currentKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
 
-    const {
-      datasetType,
-      customerCount,
-      totalSpend,
-      bgnbdParams,
-      mlMetrics,
-      rules,
-      businessImpact,
-      targetDays
-    } = req.body;
+    const prompt = buildStrategicPrompt(payload);
 
-    const prompt = `
-You are an expert Chief Marketing Officer (CMO) and Senior Business Analyst. Your job is to translate complex mathematical, statistical, and Machine Learning outcomes into a highly persuasive, plain-English strategic narrative for non-technical stakeholders (e.g., CEOs, Product Managers, Board Members).
-
-Here are the inputs from our analytic modeling engine:
-
-1. DATASET PROFILE:
-- Type: ${datasetType}
-- Size: ${customerCount} total customers analyzed
-- Total Historical Value: $${(totalSpend || 0).toLocaleString()}
-
-2. STATISTICAL BG/NBD PARAMETERS:
-- Transaction Rate Shape (r): ${bgnbdParams.r.toFixed(4)}
-- Transaction Rate Scale (alpha): ${bgnbdParams.alpha.toFixed(4)}
-- Dropout Probability Beta Shape (a): ${bgnbdParams.a.toFixed(4)}
-- Dropout Probability Beta Scale (b): ${bgnbdParams.b.toFixed(4)}
-- Gamma-Gamma Scale parameter (p): ${bgnbdParams.p?.toFixed(4) || "6.2"}
-- Gamma-Gamma Shape parameter (q): ${bgnbdParams.q?.toFixed(4) || "3.6"}
-- Gamma-Gamma Monetary parameter (gamma): ${bgnbdParams.gamma?.toFixed(4) || "15.4"}
-*Explain what these parameters imply about customer purchase frequency and how fast customers are dropping out, in conversational, plain English.*
-
-3. MACHINE LEARNING CHURN & CLV PERFORMANCE METRICS:
-- Supervised Attrition Accuracy: ${(mlMetrics.churnAccuracy * 100).toFixed(1)}%
-- Supervised Attrition Precision: ${(mlMetrics.churnPrecision * 100).toFixed(1)}%
-- Supervised Attrition Recall (Sensitivity): ${(mlMetrics.churnRecall * 100).toFixed(1)}%
-- Area Under ROC Curve (AUC): ${(mlMetrics.churnAuc * 100).toFixed(1)}%
-- Future CLV Regression MAE: $${(mlMetrics.clvMae || 0).toFixed(2)}
-*Translate these technical metrics into their business equivalent! Why does a Recall of ${(mlMetrics.churnRecall * 100).toFixed(1)}% matter for cost-efficiency? Why is Precision crucial for preserving promotional budget?*
-
-4. SUPERVISED DECISION TREE RULES FOR ATTRITION:
-${(rules || []).map((rule: string) => `- ${rule}`).join("\n")}
-
-5. BUSINESS IMPACT & CAMPAIGN CALCULATIONS (for a prospective retention campaign):
-- Campaign Cost Per Customer: $${businessImpact.campaignCost}
-- Incentive Value Offered: $${businessImpact.incentiveValue}
-- Expected Retention Campaign Success/Conversion: ${businessImpact.campaignConversion}%
-- Overall Churn Rate of Pool: ${(businessImpact.currentChurnRate * 100).toFixed(1)}%
-- Total Churn-Risk Targets Detected: ${businessImpact.targetedCustomers}
-- Estimated Prevented Churners: ${businessImpact.preventedChurnCount}
-- Gross Revenue Saved: $${(businessImpact.grossRevenueSaved || 0).toLocaleString()}
-- Total Cost (Marketing + Redeemed Incentives): $${(businessImpact.campaignCostTotal + businessImpact.incentiveCostTotal).toLocaleString()}
-- Projected Net Savings: $${(businessImpact.netSavings || 0).toLocaleString()}
-- Expected ROI: ${(businessImpact.roi || 0).toFixed(1)}%
-
-Please synthesize these inputs into a beautifully formatted Strategic Briefing (using elegant Markdown structure, no technical jargon or math symbols like math blocks, just standard plain text formatted with bold headings and structured bullet points).
-
-Structure the briefing with these exact sections:
-1. ### 📊 EXECUTIVE SUMMARY
-   - Brief synthesis of overall customer health and the forecast for the next ${targetDays} days.
-2. ### 🧠 DECODING CUSTOMER BEHAVIOR (BG/NBD & Gamma-Gamma Interpretation)
-   - Explain what the statistical parameters mean regarding customer transaction velocities and attrition rates. (e.g., does our cohort have a high initial purchase impulse but rapid decay, or a slow but steady pace?)
-3. ### 🎯 BRIDGING THE GAP: ML METRICS AS BUSINESS VALUES
-   - Explicitly translate the Churn Model's Precision, Recall, and AUC-ROC into tangible dollars, saved hours, and targeted marketing efficiencies. Demonstrate how the machine learning classifier outperforms a generic "blast to all" marketing strategy.
-4. ### 🗺️ ACTIONABLE RETENTION PLAYBOOK
-   - Provide 3 distinct, highly creative, and highly specific campaign recommendations based directly on the Decision Tree rules. Give each campaign a professional title, specify the exact target cohort, and outline the incentive strategy.
-5. ### 🚀 REVENUE & ROI FORECASTS
-   - Final summary of the projected ROI (${(businessImpact.roi || 0).toFixed(1)}%) and clear steps for the executive sponsor to greenlight this retention strategy.
-
-Keep the tone highly professional, strategic, clear, and reassuring. Do not use complex mathematical notation; use standard dollar and percentage notations.
-`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+    // Use fast and supported gemini-2.5-flash
+    const response = await client.models.generateContent({
+      model: "gemini-2.5-flash",
       contents: prompt,
     });
 
-    res.json({ report: response.text });
+    res.json({ 
+      report: response.text,
+      source: "gemini-2.5-flash"
+    });
   } catch (error: any) {
-    console.error("Gemini strategic report generation failed:", error);
-    res.status(500).json({ error: error.message || "Internal server error" });
+    console.warn("Gemini generation failed or timed out, synthesizing report via analytical engine:", error?.message);
+    const fallbackReport = generateLocalStrategicReport(payload);
+    res.json({ 
+      report: fallbackReport,
+      source: "analytical_engine_fallback",
+      error: error?.message || "Service temporarily unavailable"
+    });
   }
 });
 

@@ -4,20 +4,68 @@
  */
 
 import React, { useState } from "react";
-import { ShieldAlert, Mail, RefreshCw, LogOut, ExternalLink, Check } from "lucide-react";
+import { ShieldAlert, Mail, RefreshCw, LogOut, Lock, LogIn, Check } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export default function AccessPendingBanner() {
-  const { user, dbUser, isApproved, isCreator, creatorEmail, refreshUserProfile, signOut } = useAuth();
+  const { 
+    user, 
+    isApproved, 
+    isCreator, 
+    creatorEmail, 
+    refreshUserProfile, 
+    signOut,
+    openAuthModal 
+  } = useAuth();
+  
   const [checking, setChecking] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  // If user is not logged in or is approved/creator, don't show the gate banner
-  if (!user || isApproved || isCreator) {
+  // If user is approved or creator, don't show any restriction banner
+  if (isApproved || isCreator) {
     return null;
   }
 
-  const [copied, setCopied] = useState(false);
+  // 1. Unauthenticated Visitor Banner
+  if (!user) {
+    return (
+      <div className="bg-indigo-900/5 border-b border-indigo-100 px-4 py-2.5 text-slate-700 text-xs">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2.5">
+          <div className="flex items-center space-x-2">
+            <div className="p-1 bg-indigo-100 text-indigo-700 rounded-md shrink-0">
+              <Lock className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <span className="font-semibold text-slate-800">Protected Workspace (Read-Only Demo Mode):</span>{" "}
+              <span className="text-slate-600 text-[11px]">
+                To upload company CSV datasets or add/edit customers, sign in or request write authorization from <strong>{creatorEmail}</strong>.
+              </span>
+            </div>
+          </div>
 
+          <div className="flex items-center space-x-2 shrink-0">
+            <button
+              onClick={() => openAuthModal("request")}
+              className="px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center space-x-1.5 shadow-2xs transition-colors"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              <span>Request Access</span>
+            </button>
+
+            <button
+              onClick={() => openAuthModal("signin")}
+              className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs flex items-center space-x-1.5 shadow-2xs transition-colors"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>Sign In</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Signed-In but Pending Approval Banner
   const rawMailDraft = `Hi Mui Kim,\n\nI would like to request authorized access to use the Customer Lifetime Value & Churn Engine.\n\nMy Google Account: ${user.email}\nUser UID: ${user.uid}\nTimestamp: ${new Date().toISOString()}\n\nPlease approve my account in your Creator Access Portal.\n\nThank you!`;
 
   const handleCopyDraft = () => {
@@ -35,9 +83,7 @@ export default function AccessPendingBanner() {
   };
 
   const mailSubject = encodeURIComponent("Access Request: Customer Lifetime Value & Churn Engine");
-  const mailBody = encodeURIComponent(
-    `Hi Mui Kim,\n\nI would like to request authorized access to use the Customer Lifetime Value & Churn Engine.\n\nMy Google Account: ${user.email}\nUser UID: ${user.uid}\nTimestamp: ${new Date().toISOString()}\n\nPlease approve my account in your Creator Access Portal.\n\nThank you!`
-  );
+  const mailBody = encodeURIComponent(rawMailDraft);
   const mailtoLink = `mailto:${creatorEmail}?subject=${mailSubject}&body=${mailBody}`;
 
   return (
@@ -58,13 +104,13 @@ export default function AccessPendingBanner() {
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
-          <a
-            href={mailtoLink}
+          <button
+            onClick={() => openAuthModal("request")}
             className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-medium text-xs flex items-center space-x-1.5 shadow-xs transition-colors"
           >
             <Mail className="w-3.5 h-3.5" />
             <span>Email Creator for Access</span>
-          </a>
+          </button>
 
           <button
             onClick={handleCopyDraft}

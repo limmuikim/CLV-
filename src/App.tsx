@@ -18,7 +18,8 @@ import {
   ShieldCheck,
   ShieldAlert,
   Lock,
-  Cloud
+  Cloud,
+  Mail
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -35,9 +36,23 @@ import CohortTab from "./components/CohortTab";
 import BusinessImpactTab from "./components/BusinessImpactTab";
 import AdminApprovalModal from "./components/AdminApprovalModal";
 import AccessPendingBanner from "./components/AccessPendingBanner";
+import AuthModal from "./components/AuthModal";
 
 function Dashboard() {
-  const { user, token, isCreator, isApproved, creatorEmail, signInWithGoogle, signOut, loading: authLoading } = useAuth();
+  const { 
+    user, 
+    token, 
+    isCreator, 
+    isApproved, 
+    creatorEmail, 
+    signOut, 
+    loading: authLoading,
+    authModalOpen,
+    authModalTab,
+    openAuthModal,
+    closeAuthModal,
+    authError
+  } = useAuth();
 
   // 1. App State
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -113,12 +128,13 @@ function Dashboard() {
   // Security Verification Guard
   const verifyWritePermission = (): boolean => {
     if (!user) {
-      setPermissionErrorNotice("Authentication Required: You must sign in with Google to modify customer data or upload CSVs.");
-      signInWithGoogle();
+      setPermissionErrorNotice("Authentication Required: You must sign in to modify customer data, upload CSVs, or add orders.");
+      openAuthModal("signin");
       return false;
     }
     if (!isApproved && !isCreator) {
       setPermissionErrorNotice(`Access Restricted: Your account (${user.email}) is pending approval from the creator (${creatorEmail}). Please drop an email to request access.`);
+      openAuthModal("request");
       return false;
     }
     return true;
@@ -313,19 +329,17 @@ function Dashboard() {
               </button>
             )}
 
-            {/* Firebase Auth Button & User Status */}
+            {/* Auth Controls & User Status */}
             <div className="flex items-center space-x-2">
               {user && !isApproved && !isCreator && (
-                <a
-                  href={`mailto:${creatorEmail}?subject=${encodeURIComponent("Access Request: Customer Lifetime Value & Churn Engine")}&body=${encodeURIComponent(
-                    `Hi Mui Kim,\n\nI would like to request permission to use and add customer records in the Customer Lifetime Value & Churn Engine.\n\nMy Google Account: ${user.email}\nUser UID: ${user.uid}\n\nPlease approve my account in your Creator Access Portal.\n\nThank you!`
-                  )}`}
+                <button
+                  onClick={() => openAuthModal("request")}
                   className="hidden sm:flex items-center space-x-1.5 text-xs bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-1.5 px-2.5 rounded-xl shadow-xs transition-colors"
-                  title="Send email to creator to request write authorization"
+                  title="Request write authorization from the creator"
                 >
-                  <Lock className="w-3.5 h-3.5" />
+                  <Mail className="w-3.5 h-3.5" />
                   <span>Request Access</span>
-                </a>
+                </button>
               )}
 
               {user ? (
@@ -358,14 +372,24 @@ function Dashboard() {
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={signInWithGoogle}
-                  disabled={authLoading}
-                  className="flex items-center space-x-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-1.5 px-3 rounded-xl shadow-xs transition-colors"
-                >
-                  <LogIn className="w-3.5 h-3.5" />
-                  <span>Sign In</span>
-                </button>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => openAuthModal("request")}
+                    className="flex items-center space-x-1.5 text-xs bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-1.5 px-3 rounded-xl shadow-xs transition-colors"
+                    title="Request access to use and add customer records"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Request Access</span>
+                  </button>
+
+                  <button
+                    onClick={() => openAuthModal("signin")}
+                    className="flex items-center space-x-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-1.5 px-3.5 rounded-xl shadow-xs transition-colors"
+                  >
+                    <LogIn className="w-3.5 h-3.5" />
+                    <span>Sign In</span>
+                  </button>
+                </div>
               )}
             </div>
 
@@ -566,6 +590,13 @@ function Dashboard() {
       <AdminApprovalModal 
         isOpen={adminModalOpen} 
         onClose={() => setAdminModalOpen(false)} 
+      />
+
+      {/* Authentication and Access Request Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={closeAuthModal}
+        defaultTab={authModalTab}
       />
 
       {/* Humble Footer */}

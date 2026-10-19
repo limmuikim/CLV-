@@ -47,7 +47,7 @@ export default function ImportTab({
   transactionsCount,
   currentTransactions
 }: ImportTabProps) {
-  const { user, token, isCreator, isApproved, creatorEmail, signInWithGoogle } = useAuth();
+  const { user, token, isCreator, isApproved, creatorEmail, signInWithGoogle, openAuthModal } = useAuth();
   const hasWriteAccess = Boolean(user && (isApproved || isCreator));
 
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -123,8 +123,12 @@ export default function ImportTab({
 
   // Save current active transactions into Cloud SQL
   const handleSaveToCloudSql = async () => {
-    if (!token) return;
+    if (!token) {
+      openAuthModal("signin");
+      return;
+    }
     if (!hasWriteAccess) {
+      openAuthModal("request");
       setSyncStatus({
         type: "error",
         message: `Security Access Restricted: Your account is pending creator authorization. Please drop an email to ${creatorEmail} to approve access.`
@@ -917,13 +921,22 @@ export default function ImportTab({
                     Please sign in with Google to upload customer transaction CSVs or commit live data.
                   </p>
                 </div>
-                <button
-                  onClick={signInWithGoogle}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center space-x-1.5 transition-colors"
-                >
-                  <LogIn className="w-3.5 h-3.5" />
-                  <span>Sign In with Google</span>
-                </button>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => openAuthModal("request")}
+                    className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-bold shadow-xs flex items-center space-x-1.5 transition-colors"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Request Access</span>
+                  </button>
+                  <button
+                    onClick={() => openAuthModal("signin")}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center space-x-1.5 transition-colors"
+                  >
+                    <LogIn className="w-3.5 h-3.5" />
+                    <span>Sign In</span>
+                  </button>
+                </div>
               </div>
             ) : !hasWriteAccess ? (
               <div className="border-2 border-dashed border-amber-200 rounded-xl p-6 text-center bg-amber-50/40 flex flex-col items-center justify-center space-y-3">

@@ -218,3 +218,50 @@ export async function getLatestSnapshots(userId: string) {
     throw new Error("Failed to fetch customer snapshots.", { cause: error });
   }
 }
+
+// Get user profile by email
+export async function getUserByEmail(email: string) {
+  try {
+    const records = await db.select().from(users).where(eq(users.email, email.trim().toLowerCase()));
+    return records[0] || null;
+  } catch (error) {
+    console.error("Failed to query user by email:", error);
+    return null;
+  }
+}
+
+// Submit or update an access request
+export async function createAccessRequest(email: string, name?: string, note?: string) {
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+    const isCreator = cleanEmail === CREATOR_EMAIL.toLowerCase();
+
+    // Check if user already exists
+    const existing = await getUserByEmail(cleanEmail);
+    if (existing) {
+      if (isCreator && existing.status !== 'approved') {
+        const updated = await db.update(users)
+          .set({ role: 'admin', status: 'approved' })
+          .where(eq(users.id, existing.id))
+          .returning();
+        return updated[0];
+      }
+      return existing;
+    }
+
+    // Insert new user with pending status (or approved if creator)
+    const newUid = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const inserted = await db.insert(users).values({
+      uid: newUid,
+      email: cleanEmail,
+      role: isCreator ? 'admin' : 'user',
+      status: isCreator ? 'approved' : 'pending',
+    }).returning();
+
+    return inserted[0];
+  } catch (error) {
+    console.error("Failed to create access request:", error);
+    throw new Error("Failed to register access request in database.", { cause: error });
+  }
+}
+

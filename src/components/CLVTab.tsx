@@ -49,7 +49,7 @@ export default function CLVTab({
   onDeleteCustomer,
   onAddOrderToCustomer
 }: CLVTabProps) {
-  const { user, isCreator, isApproved, creatorEmail, signInWithGoogle } = useAuth();
+  const { user, isCreator, isApproved, creatorEmail, signInWithGoogle, openAuthModal } = useAuth();
   const hasWriteAccess = Boolean(user && (isApproved || isCreator));
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -821,16 +821,28 @@ export default function CLVTab({
               </button>
 
               {!user ? (
-                <button
-                  onClick={() => {
-                    setShowSecurityModal(false);
-                    signInWithGoogle();
-                  }}
-                  className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-xs flex items-center justify-center space-x-1.5"
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>Sign in with Google</span>
-                </button>
+                <div className="flex items-center space-x-2 w-full sm:w-auto">
+                  <button
+                    onClick={() => {
+                      setShowSecurityModal(false);
+                      openAuthModal("request");
+                    }}
+                    className="flex-1 sm:flex-initial px-3 py-2 rounded-xl text-xs font-medium border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 flex items-center justify-center space-x-1"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Request Access</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowSecurityModal(false);
+                      openAuthModal("signin");
+                    }}
+                    className="flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-xs flex items-center justify-center space-x-1.5"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Sign In</span>
+                  </button>
+                </div>
               ) : (
                 <div className="flex items-center space-x-2 w-full sm:w-auto">
                   <button

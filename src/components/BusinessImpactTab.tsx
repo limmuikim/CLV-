@@ -4,9 +4,10 @@
  */
 
 import React, { useState, useMemo } from "react";
-import { DollarSign, Percent, TrendingUp, Sparkles, BookOpen, Download, Copy, Check, RefreshCw, AlertCircle } from "lucide-react";
+import { DollarSign, Percent, TrendingUp, Sparkles, BookOpen, Download, Copy, Check, RefreshCw, AlertCircle, Cpu, Info } from "lucide-react";
 import { RFMCustomer, PredictionResult, ModelMetrics } from "../types";
 import { calculateBusinessImpact } from "../utils/analytics";
+import { generateLocalStrategicReport, StrategicAnalysisPayload } from "../lib/strategicReportGenerator";
 
 interface BusinessImpactTabProps {
   customers: RFMCustomer[];
@@ -30,6 +31,7 @@ export default function BusinessImpactTab({
   
   // 2. Strategic Report Generation State
   const [report, setReport] = useState<string | null>(null);
+  const [reportSource, setReportSource] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,62 +53,94 @@ export default function BusinessImpactTab({
     });
   }, [customers, predictions, metrics, campaignCost, incentiveValue, campaignConversion, averageCLV]);
 
-  // 4. Request Gemini Strategic Briefing from Full-Stack Express Server
+  // 4. Request Gemini Strategic Briefing (with serverless & local deterministic fallback)
   const handleGenerateReport = async () => {
     setLoading(true);
     setError(null);
     setReport(null);
+    setReportSource(null);
 
     const totalSpend = customers.reduce((sum, c) => sum + c.totalSpend, 0);
 
-    try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          datasetType,
-          customerCount: customers.length,
-          totalSpend,
-          bgnbdParams: {
-            r: 0.5,
-            alpha: 10,
-            a: 0.8,
-            b: 2.5,
-            p: 6.2,
-            q: 3.6,
-            gamma: averageCLV / 2.38
-          },
-          mlMetrics: metrics,
-          rules,
-          businessImpact: {
-            campaignCost,
-            incentiveValue,
-            campaignConversion,
-            currentChurnRate: impact.currentChurnRate,
-            targetedCustomers: impact.targetedCustomers,
-            preventedChurnCount: impact.preventedChurnCount,
-            grossRevenueSaved: impact.grossRevenueSaved,
-            campaignCostTotal: impact.campaignCostTotal,
-            incentiveCostTotal: impact.incentiveCostTotal,
-            netSavings: impact.netSavings,
-            roi: impact.roi
-          },
-          targetDays: 90
-        })
-      });
+    const payload: StrategicAnalysisPayload = {
+      datasetType,
+      customerCount: customers.length,
+      totalSpend,
+      bgnbdParams: {
+        r: 0.5,
+        alpha: 10,
+        a: 0.8,
+        b: 2.5,
+        p: 6.2,
+        q: 3.6,
+        gamma: averageCLV / 2.38
+      },
+      mlMetrics: metrics,
+      rules,
+      businessImpact: {
+        campaignCost,
+        incentiveValue,
+        campaignConversion,
+        currentChurnRate: impact.currentChurnRate,
+        targetedCustomers: impact.targetedCustomers,
+        preventedChurnCount: impact.preventedChurnCount,
+        grossRevenueSaved: impact.grossRevenueSaved,
+        campaignCostTotal: impact.campaignCostTotal,
+        incentiveCostTotal: impact.incentiveCostTotal,
+        netSavings: impact.netSavings,
+        roi: impact.roi
+      },
+      targetDays: 90
+    };
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || `HTTP error ${response.status}`);
+    try {
+      let finalReport = "";
+      let sourceTag = "gemini";
+
+      try {
+        const response = await fetch("/api/analyze", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+
+        // Safe text reading to prevent SyntaxError: Unexpected token 'T' on HTML responses (e.g. Vercel 404)
+        const rawText = await response.text();
+        let data: any = null;
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          // If response is HTML (e.g. Vercel static 404 "The page cannot be found..."), catch gracefully
+          console.warn("Backend /api/analyze returned non-JSON response:", rawText.slice(0, 100));
+        }
+
+        if (response.ok && data?.report) {
+          finalReport = data.report;
+          sourceTag = data.source || "gemini-2.5-flash";
+        } else if (data?.report) {
+          finalReport = data.report;
+          sourceTag = data.source || "analytical_engine";
+        } else {
+          // API endpoint returned 404/500 without JSON report (e.g. Vercel static deployment)
+          finalReport = generateLocalStrategicReport(payload);
+          sourceTag = "analytical_engine";
+        }
+      } catch (fetchErr) {
+        console.warn("Direct /api/analyze network call failed, falling back to local analytical engine:", fetchErr);
+        finalReport = generateLocalStrategicReport(payload);
+        sourceTag = "analytical_engine";
       }
 
-      const data = await response.json();
-      setReport(data.report);
+      setReport(finalReport);
+      setReportSource(sourceTag);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Failed to contact Gemini server. Ensure your GEMINI_API_KEY is active.");
+      // Guarantee the user always gets a high-grade executive briefing
+      const fallbackReport = generateLocalStrategicReport(payload);
+      setReport(fallbackReport);
+      setReportSource("analytical_engine");
     } finally {
       setLoading(false);
     }
@@ -370,16 +404,13 @@ export default function BusinessImpactTab({
           </div>
         )}
 
-        {/* Error message */}
+        {/* Error notice if any */}
         {error && (
-          <div className="p-4 rounded-xl bg-rose-50 border border-rose-100 text-rose-700 flex items-start space-x-3 text-sm" id="briefing-error-box">
-            <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 flex items-start space-x-3 text-sm" id="briefing-error-box">
+            <Info className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <span className="font-semibold block mb-0.5">Strategic Generation Failed:</span>
+              <span className="font-semibold block mb-0.5">Generation Note:</span>
               {error}
-              <p className="text-xs text-rose-500 mt-2 leading-relaxed">
-                Ensure process.env.GEMINI_API_KEY is properly initialized via the Settings secrets explorer in the AI Studio UI to activate server-side reporting.
-              </p>
             </div>
           </div>
         )}
@@ -389,10 +420,22 @@ export default function BusinessImpactTab({
           <div className="rounded-xl border border-slate-100 shadow-xs overflow-hidden bg-slate-50/20" id="strategic-report-display">
             
             {/* Header controls for report */}
-            <div className="flex justify-between items-center bg-slate-50 p-4 border-b border-slate-100 text-xs">
-              <div className="flex items-center space-x-2 text-slate-500 font-medium">
-                <BookOpen className="w-4 h-4 text-indigo-600" />
-                <span>Generated by Gemini 3.5-Flash</span>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 p-4 border-b border-slate-100 text-xs gap-3">
+              <div className="flex items-center space-x-2 text-slate-700 font-medium">
+                {reportSource?.includes("gemini") ? (
+                  <>
+                    <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <span>Generated by <span className="font-semibold text-indigo-600">Gemini 2.5-Flash</span></span>
+                  </>
+                ) : (
+                  <>
+                    <Cpu className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Generated by <span className="font-semibold text-emerald-600">Strategic Analytical Engine</span></span>
+                    <span className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-normal">
+                      Deterministic / Vercel Ready
+                    </span>
+                  </>
+                )}
               </div>
 
               <div className="flex items-center space-x-2" id="report-action-buttons">
